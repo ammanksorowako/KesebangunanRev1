@@ -1,0 +1,870 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ujian Sumatif: Kesebangunan & Kekongruenan</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- FontAwesome -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
+        /* Anti-cheat CSS */
+        .no-select {
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+        }
+        /* Print Styling for PDF Export */
+        @media print {
+            body { background-color: white; }
+            .no-print { display: none !important; }
+            .print-only { display: block !important; }
+            .print-break-inside-avoid { break-inside: avoid; }
+            #root { padding: 0; margin: 0; }
+        }
+        .print-only { display: none; }
+        
+        /* Marquee Animation */
+        @keyframes marquee {
+            0% { transform: translateX(100vw); }
+            100% { transform: translateX(-100%); }
+        }
+        .animate-marquee {
+            display: inline-block;
+            white-space: nowrap;
+            animation: marquee 20s linear infinite;
+            will-change: transform;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel" data-type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        import { getFirestore, collection, addDoc, onSnapshot } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
+
+        const { useState, useEffect, useCallback } = React;
+
+        // --- FIREBASE SETUP ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' && __firebase_config ? JSON.parse(__firebase_config) : null;
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        let app, auth, db;
+        if (firebaseConfig) {
+            app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+        }
+
+        // --- OFFLINE FALLBACK (IndexedDB) ---
+        const initOfflineDB = () => {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open('ExamOfflineDB', 1);
+                request.onupgradeneeded = (e) => {
+                    const localDb = e.target.result;
+                    if (!localDb.objectStoreNames.contains('exam_results')) {
+                        localDb.createObjectStore('exam_results', { keyPath: 'id', autoIncrement: true });
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        };
+
+        const saveOfflineResult = async (data) => {
+            try {
+                const localDb = await initOfflineDB();
+                const tx = localDb.transaction('exam_results', 'readwrite');
+                tx.objectStore('exam_results').add(data);
+            } catch (err) {
+                console.error("Offline save error:", err);
+            }
+        };
+
+        const loadOfflineResults = async () => {
+            try {
+                const localDb = await initOfflineDB();
+                return new Promise((resolve) => {
+                    const tx = localDb.transaction('exam_results', 'readonly');
+                    const req = tx.objectStore('exam_results').getAll();
+                    req.onsuccess = () => resolve(req.result || []);
+                });
+            } catch (err) {
+                console.error("Offline load error:", err);
+                return [];
+            }
+        };
+
+        // --- DATA & QUESTION GENERATOR ---
+        const MULTIPLIERS = [1, 2, 3, 4, 5, 10];
+        
+        const generatePackage = (pkgIndex) => {
+            const m = MULTIPLIERS[pkgIndex];
+            const pkgName = `Paket ${pkgIndex + 1}`;
+            
+            return {
+                pkgName,
+                questions: [
+                    {
+                        id: 1, type: 'pg',
+                        text: `Tiga garis sejajar AB // CD // EF. Diketahui panjang AB = ${10*m} cm, AC = ${4*m} cm, CE = ${6*m} cm, dan EF = ${19*m} cm. Panjang CD adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 140">
+                                <polygon points="70,20 170,20 210,120 30,120" fill="#f3f4f6" stroke="#374151" strokeWidth="2"/>
+                                <line x1="46" y1="80" x2="194" y2="80" stroke="#374151" strokeWidth="2" strokeDasharray="4"/>
+                                <text x="70" y="15" fontSize="14" fontWeight="bold">A</text>
+                                <text x="170" y="15" fontSize="14" fontWeight="bold">B</text>
+                                <text x="35" y="75" fontSize="14" fontWeight="bold">C</text>
+                                <text x="195" y="75" fontSize="14" fontWeight="bold">D</text>
+                                <text x="20" y="135" fontSize="14" fontWeight="bold">E</text>
+                                <text x="210" y="135" fontSize="14" fontWeight="bold">F</text>
+                                <text x="120" y="40" textAnchor="middle" fontSize="12" fill="#4b5563">{10*m} cm</text>
+                                <text x="120" y="115" textAnchor="middle" fontSize="12" fill="#4b5563">{19*m} cm</text>
+                                <text x="40" y="50" fontSize="11" fill="#4b5563">{4*m} cm</text>
+                                <text x="25" y="105" fontSize="11" fill="#4b5563">{6*m} cm</text>
+                            </svg>
+                        ),
+                        options: [`${(13.0*m).toFixed(1)} cm`, `${(13.6*m).toFixed(1)} cm`, `${16*m} cm`, `${18*m} cm`],
+                        answer: 1 // Index 1 -> B
+                    },
+                    {
+                        id: 2, type: 'pg',
+                        text: `Dua persegi panjang ABCD dan EFGH sebangun. Jika panjang AD = BC = ${20*m} cm, panjang AB = DC = ${30*m} cm, dan panjang EH = FG = ${10*m} cm. Panjang HG adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 180">
+                                <rect x="20" y="20" width="200" height="140" fill="#e5e7eb" stroke="#374151" strokeWidth="2" rx="4"/>
+                                <rect x="60" y="50" width="120" height="80" fill="white" stroke="#374151" strokeWidth="2" rx="2" strokeDasharray="4"/>
+                                <text x="10" y="15" fontSize="14" fontWeight="bold">A</text>
+                                <text x="225" y="15" fontSize="14" fontWeight="bold">B</text>
+                                <text x="225" y="175" fontSize="14" fontWeight="bold">C</text>
+                                <text x="10" y="175" fontSize="14" fontWeight="bold">D</text>
+                                <text x="50" y="45" fontSize="12" fontWeight="bold" fill="#1f2937">E</text>
+                                <text x="185" y="45" fontSize="12" fontWeight="bold" fill="#1f2937">F</text>
+                                <text x="185" y="145" fontSize="12" fontWeight="bold" fill="#1f2937">G</text>
+                                <text x="50" y="145" fontSize="12" fontWeight="bold" fill="#1f2937">H</text>
+                                <text x="120" y="15" textAnchor="middle" fontSize="12" fill="#4b5563">{30*m} cm</text>
+                                <text x="120" y="45" textAnchor="middle" fontSize="11" fill="#4b5563">? cm</text>
+                                <text x="5" y="90" fontSize="12" fill="#4b5563" transform="rotate(-90 5,90)">{20*m} cm</text>
+                                <text x="45" y="90" fontSize="11" fill="#4b5563" transform="rotate(-90 45,90)">{10*m} cm</text>
+                            </svg>
+                        ),
+                        options: [`${15*m} cm`, `${12*m} cm`, `${16*m} cm`, `${18*m} cm`],
+                        answer: 0 // Index 0 -> A
+                    },
+                    {
+                        id: 3, type: 'pg',
+                        text: `Jajar genjang ABCD kongruen dengan jajar genjang EFGH. Panjang sisi atas = ${9*m} cm, sisi miring = ${5*m} cm. Pada EFGH, garis tinggi HI ditarik ke EF dengan bagian alas EI = ${3*m} cm. Panjang tinggi HI dan sisa alas IF berturut-turut adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 120">
+                                <polygon points="60,20 180,20 140,100 20,100" fill="#fef08a" stroke="#ca8a04" strokeWidth="2" strokeLinejoin="round"/>
+                                <line x1="60" y1="20" x2="60" y2="100" stroke="#ca8a04" strokeDasharray="4" strokeWidth="2"/>
+                                <rect x="60" y="90" width="10" height="10" fill="none" stroke="#ca8a04"/>
+                                <text x="55" y="15" fontSize="14" fontWeight="bold">H</text>
+                                <text x="185" y="15" fontSize="14" fontWeight="bold">G</text>
+                                <text x="10" y="115" fontSize="14" fontWeight="bold">E</text>
+                                <text x="145" y="115" fontSize="14" fontWeight="bold">F</text>
+                                <text x="55" y="115" fontSize="14" fontWeight="bold">I</text>
+                                <text x="120" y="15" textAnchor="middle" fontSize="12" fill="#854d0e">{9*m} cm</text>
+                                <text x="15" y="55" fontSize="11" fill="#854d0e">{5*m} cm</text>
+                                <text x="35" y="95" fontSize="11" fill="#854d0e">{3*m} cm</text>
+                            </svg>
+                        ),
+                        options: [`${3*m} cm dan ${6*m} cm`, `${4*m} cm dan ${6*m} cm`, `${6*m} cm dan ${4*m} cm`, `${4*m} cm dan ${5*m} cm`],
+                        answer: 1 // Index 1 -> B
+                    },
+                    {
+                        id: 4, type: 'pg',
+                        text: `Segitiga ABC sebangun dengan ADE (titik D berada di ruas AB, titik E di ruas AC). Panjang alas besar CB = ${12*m} cm, alas kecil ED = ${8*m} cm, dan sisi AD = ${10*m} cm. Panjang DB adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 180">
+                                <polygon points="120,20 40,160 200,160" fill="#bfdbfe" stroke="#2563eb" strokeWidth="2" strokeLinejoin="round"/>
+                                <line x1="80" y1="90" x2="160" y2="90" stroke="#2563eb" strokeWidth="2" strokeDasharray="4"/>
+                                <text x="115" y="15" fontSize="14" fontWeight="bold">A</text>
+                                <text x="25" y="175" fontSize="14" fontWeight="bold">B</text>
+                                <text x="205" y="175" fontSize="14" fontWeight="bold">C</text>
+                                <text x="65" y="85" fontSize="14" fontWeight="bold">D</text>
+                                <text x="165" y="85" fontSize="14" fontWeight="bold">E</text>
+                                <text x="120" y="175" textAnchor="middle" fontSize="12" fill="#1e40af">{12*m} cm</text>
+                                <text x="120" y="85" textAnchor="middle" fontSize="12" fill="#1e40af">{8*m} cm</text>
+                                <text x="85" y="55" textAnchor="end" fontSize="11" fill="#1e40af">{10*m} cm</text>
+                            </svg>
+                        ),
+                        options: [`${7*m} cm`, `${4*m} cm`, `${6*m} cm`, `${5*m} cm`],
+                        answer: 3 // Index 3 -> D
+                    },
+                    {
+                        id: 5, type: 'pg',
+                        text: `Layang-layang ABCD terbentuk dari dua segitiga kongruen ABC dan ADC. Besar sudut B = 110°, sudut C terbagi menjadi 40° dan 40°. Besar sudut DAC adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 200 160">
+                                <polygon points="40,80 100,20 160,80 100,140" fill="#fecaca" stroke="#dc2626" strokeWidth="2" strokeLinejoin="round"/>
+                                <line x1="40" y1="80" x2="160" y2="80" stroke="#dc2626" strokeDasharray="4" strokeWidth="1.5"/>
+                                <text x="25" y="85" fontSize="14" fontWeight="bold">A</text>
+                                <text x="95" y="15" fontSize="14" fontWeight="bold">B</text>
+                                <text x="165" y="85" fontSize="14" fontWeight="bold">C</text>
+                                <text x="95" y="155" fontSize="14" fontWeight="bold">D</text>
+                                <text x="95" y="45" fontSize="11" fill="#991b1b">110°</text>
+                                <text x="135" y="75" fontSize="11" fill="#991b1b">40°</text>
+                                <text x="135" y="95" fontSize="11" fill="#991b1b">40°</text>
+                            </svg>
+                        ),
+                        options: [`60°`, `30°`, `40°`, `50°`],
+                        answer: 1 // Index 1 -> B (30 deg is constant)
+                    },
+                    {
+                        id: 6, type: 'pg',
+                        text: `Dari layang-layang ABCD pada soal sebelumnya, jika panjang sisi AB = ${7*m} cm, maka panjang sisi AD adalah...`,
+                        img: null,
+                        options: [`${5*m} cm`, `${16*m} cm`, `${10*m} cm`, `${7*m} cm`],
+                        answer: 3 // Index 3 -> D
+                    },
+                    {
+                        id: 7, type: 'pg',
+                        text: `Seorang siswa ingin mengukur tinggi tiang bendera. Panjang bayangan siswa adalah ${2*m} meter dan jarak siswa dengan tiang bendera adalah ${8*m} meter. Jika tinggi siswa adalah ${(1.8*m).toFixed(1)} meter, maka tinggi tiang bendera adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 140">
+                                <line x1="20" y1="120" x2="220" y2="120" stroke="#4b5563" strokeWidth="3"/>
+                                <line x1="200" y1="20" x2="200" y2="120" stroke="#9ca3af" strokeWidth="6" strokeLinecap="round"/>
+                                <rect x="90" y="80" width="10" height="40" fill="#3b82f6" rx="2"/>
+                                <circle cx="95" cy="70" r="8" fill="#fcd34d"/>
+                                <line x1="200" y1="20" x2="20" y2="120" stroke="#f59e0b" strokeDasharray="4" strokeWidth="2"/>
+                                <text x="55" y="135" textAnchor="middle" fontSize="11" fill="#374151">Bayangan: {2*m}m</text>
+                                <text x="145" y="135" textAnchor="middle" fontSize="11" fill="#374151">Jarak: {8*m}m</text>
+                                <text x="70" y="95" fontSize="11" fill="#1e3a8a">{(1.8*m).toFixed(1)}m</text>
+                            </svg>
+                        ),
+                        options: [`${9*m} m`, `${6*m} m`, `${10*m} m`, `${8*m} m`],
+                        answer: 0 // Index 0 -> A
+                    },
+                    {
+                        id: 8, type: 'pg',
+                        text: `Sebuah foto diletakkan pada bingkai. Foto dan bingkainya sebangun. Ukuran foto adalah ${24*m} cm x ${32*m} cm (Lebar x Tinggi). Jarak tepi atas, kiri, dan kanan foto ke bingkai adalah ${2*m} cm. Jarak tepi bawah foto ke bingkai adalah...`,
+                        img: (
+                            <svg className="w-full max-w-[180px] h-auto my-4 mx-auto drop-shadow-md" viewBox="0 0 140 180">
+                                <rect x="10" y="10" width="120" height="160" fill="#fcd34d" stroke="#b45309" strokeWidth="2" rx="4"/>
+                                <rect x="30" y="30" width="80" height="110" fill="white" stroke="#b45309" strokeWidth="1"/>
+                                <text x="70" y="85" textAnchor="middle" fontSize="14" fontWeight="bold" fill="#92400e">Foto</text>
+                                <text x="70" y="25" textAnchor="middle" fontSize="11" fill="#b45309">{2*m} cm</text>
+                                <text x="20" y="85" textAnchor="middle" fontSize="11" fill="#b45309" transform="rotate(-90 20,85)">{2*m} cm</text>
+                                <text x="120" y="85" textAnchor="middle" fontSize="11" fill="#b45309" transform="rotate(90 120,85)">{2*m} cm</text>
+                                <text x="70" y="160" textAnchor="middle" fontSize="12" fontWeight="bold" fill="#dc2626">? cm</text>
+                            </svg>
+                        ),
+                        options: [`${9*m} cm`, `${6*m} cm`, `${10*m} cm`, `${8*m} cm`],
+                        answer: 1 // Index 1 -> B
+                    },
+                    {
+                        id: 9, type: 'pg',
+                        text: `Tiga garis sejajar AB // CD // EF dipotong oleh garis lurus. Jika panjang AB = ${10*m} cm, AC = ${3*m} cm, CE = ${6*m} cm, dan CD = ${14*m} cm. Panjang EF adalah...`,
+                        img: (
+                            <svg className="w-full max-w-sm h-auto my-4 drop-shadow-sm" viewBox="0 0 240 140">
+                                <polygon points="70,20 170,20 210,120 30,120" fill="#f3e8ff" stroke="#9333ea" strokeWidth="2"/>
+                                <line x1="58" y1="50" x2="182" y2="50" stroke="#9333ea" strokeWidth="2" strokeDasharray="4"/>
+                                <text x="70" y="15" fontSize="14" fontWeight="bold">A</text>
+                                <text x="170" y="15" fontSize="14" fontWeight="bold">B</text>
+                                <text x="45" y="45" fontSize="14" fontWeight="bold">C</text>
+                                <text x="185" y="45" fontSize="14" fontWeight="bold">D</text>
+                                <text x="20" y="130" fontSize="14" fontWeight="bold">E</text>
+                                <text x="210" y="130" fontSize="14" fontWeight="bold">F</text>
+                                <text x="120" y="40" textAnchor="middle" fontSize="12" fill="#6b21a8">{14*m} cm</text>
+                                <text x="120" y="135" textAnchor="middle" fontSize="12" fill="#6b21a8">? cm</text>
+                                <text x="45" y="35" fontSize="11" fill="#6b21a8">{3*m} cm</text>
+                                <text x="35" y="90" fontSize="11" fill="#6b21a8">{6*m} cm</text>
+                            </svg>
+                        ),
+                        options: [`${15*m} cm`, `${18*m} cm`, `${22*m} cm`, `${20*m} cm`],
+                        answer: 2 // Index 2 -> C
+                    },
+                    {
+                        id: 10, type: 'pg',
+                        text: `Syarat dua bangun datar dikatakan kongruen adalah...`,
+                        img: null,
+                        options: [
+                            `Sisi-sisi yang bersesuaian sama panjang dan sudut-sudut yang bersesuaian sama besar`,
+                            `Sisi-sisi yang bersesuaian sebanding dan sudut-sudut yang bersesuaian sama besar`,
+                            `Sisi-sisi yang bersesuaian sama panjang dan sudut-sudut yang bersesuaian berbeda`,
+                            `Sisi-sisi yang bersesuaian sebanding dan sudut-sudut yang bersesuaian berbeda`
+                        ],
+                        answer: 0 // Index 0 -> A
+                    },
+                    {
+                        id: 11, type: 'pg',
+                        text: `Di antara pilihan berikut, dua pasang bangun datar yang PASTI sebangun adalah...`,
+                        img: null,
+                        options: [`Dua persegi panjang`, `Dua belah ketupat`, `Dua persegi`, `Dua segitiga sama kaki`],
+                        answer: 2 // Index 2 -> C
+                    },
+                    {
+                        id: 12, type: 'uraian',
+                        text: `Dua segitiga siku-siku sebangun. Sisi tegak masing-masing adalah ${3*m} cm dan ${6*m} cm. Jika alas segitiga kecil adalah ${4*m} cm, hitunglah panjang alas segitiga besar (AB) dalam cm! (Tuliskan angkanya saja)`,
+                        img: null,
+                        answer: `${8*m}`
+                    },
+                    {
+                        id: 13, type: 'uraian',
+                        text: `Segitiga ABC dan ADE sebangun dan berimpit di titik A. Alas sejajar DE = ${10*m} cm, BC = ${15*m} cm. Sisi miring kecil AE = ${6*m} cm. Hitunglah panjang sisi miring besar AC dalam cm! (Tuliskan angkanya saja)`,
+                        img: null,
+                        answer: `${9*m}`
+                    },
+                    {
+                        id: 14, type: 'uraian',
+                        text: `Segitiga ABC kongruen dengan segitiga DEF. Diketahui panjang AB = ${5*m} cm, BC = ${7*m} cm, dan AC = ${6*m} cm. Pada segitiga DEF, DE = ${5*m} cm dan DF = ${6*m} cm. Hitunglah panjang EF dalam cm! (Tuliskan angkanya saja)`,
+                        img: null,
+                        answer: `${7*m}`
+                    },
+                    {
+                        id: 15, type: 'uraian',
+                        text: `Segitiga ABC sebangun dengan BDE, berimpit di titik B dan berjejer lurus di C-D-B. Alas sejajar AC = ${10*m} cm, DE = ${5*m} cm. Sisi miring kecil BE = ${4*m} cm. Sisi CB berimpit DB. Hitunglah panjang CD dalam cm! (Tuliskan angkanya saja)`,
+                        img: null,
+                        answer: `${4*m}`
+                    }
+                ]
+            };
+        };
+
+        // --- COMPONENTS ---
+        const Modal = ({ isOpen, title, message, btnText, onAction, secondaryBtnText, onSecondaryAction }) => {
+            if (!isOpen) return null;
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+                    <div className="bg-white p-8 rounded-xl shadow-2xl max-w-md w-full text-center">
+                        <i className={`fas ${secondaryBtnText ? 'fa-question-circle text-blue-500' : 'fa-exclamation-triangle text-red-500'} text-5xl mb-4`}></i>
+                        <h2 className="text-2xl font-bold mb-2 text-gray-800">{title}</h2>
+                        <p className="text-gray-600 mb-6">{message}</p>
+                        <div className="flex justify-center gap-4">
+                            {secondaryBtnText && (
+                                <button onClick={onSecondaryAction} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-semibold transition-colors">
+                                    {secondaryBtnText}
+                                </button>
+                            )}
+                            <button onClick={onAction} className={`px-6 py-2 ${secondaryBtnText ? 'bg-blue-600 hover:bg-blue-700' : 'bg-red-600 hover:bg-red-700'} text-white rounded-lg font-semibold transition-colors`}>
+                                {btnText}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        };
+
+        const FooterMarquee = () => (
+            <div className="fixed bottom-0 left-0 w-full bg-blue-900 text-white text-sm py-2 overflow-hidden z-50 no-print shadow-lg border-t-2 border-blue-700">
+                <div className="animate-marquee font-semibold tracking-widest">
+                    SMP YPS SINGKOLE - MATH AROUND US - By Pak Ammank - 2026
+                </div>
+            </div>
+        );
+
+        const App = () => {
+            const [step, setStep] = useState(0); // 0: Login, 1: Quiz, 2: Result
+            const [viewMode, setViewMode] = useState('student'); // 'student' or 'teacher'
+            const [user, setUser] = useState(null);
+            const [allResults, setAllResults] = useState([]);
+            const [student, setStudent] = useState({ name: '', cls: 'IXA' });
+            const [packageData, setPackageData] = useState(null);
+            const [answers, setAnswers] = useState({});
+            const [warnings, setWarnings] = useState(0);
+            const [showWarningModal, setShowWarningModal] = useState(false);
+            const [showConfirmSubmit, setShowConfirmSubmit] = useState(false);
+            const [score, setScore] = useState(0);
+            const [examCompleteReason, setExamCompleteReason] = useState("");
+
+            // --- EXAM TIMER & OFFLINE REF STATE ---
+            const EXAM_DURATION = 65 * 60; // 65 Menit (dalam detik)
+            const [timeLeft, setTimeLeft] = useState(EXAM_DURATION);
+            
+            const stateRefs = React.useRef({ answers, warnings, packageData, student, user });
+            useEffect(() => {
+                stateRefs.current = { answers, warnings, packageData, student, user };
+            }, [answers, warnings, packageData, student, user]);
+
+            const executeSubmit = (forcedWarnings = null) => {
+                const { answers: currAnswers, warnings: currWarnings, packageData: currPkg, student: currStudent, user: currUser } = stateRefs.current;
+                const finalWarnings = forcedWarnings !== null ? forcedWarnings : currWarnings;
+                
+                if (!currPkg) return;
+
+                // Calculate Score
+                let correctCount = 0;
+                currPkg.questions.forEach(q => {
+                    const userAns = currAnswers[q.id];
+                    if (q.type === 'pg') {
+                        if (userAns === q.answer) correctCount++;
+                    } else if (q.type === 'uraian') {
+                        if (userAns && userAns.toString().trim() === q.answer) correctCount++;
+                    }
+                });
+                
+                const calculatedScore = Math.round((correctCount / 15) * 100);
+                setScore(calculatedScore);
+                setStep(2);
+                
+                const resultData = {
+                    name: currStudent.name,
+                    cls: currStudent.cls,
+                    score: calculatedScore,
+                    package: currPkg.pkgName,
+                    warnings: finalWarnings,
+                    timestamp: new Date().toISOString(),
+                    userId: currUser ? currUser.uid : 'local-user'
+                };
+
+                // Selalu simpan ke Offline DB di komputer lokal (sebagai backup otomatis)
+                saveOfflineResult(resultData);
+
+                // Simpan ke Cloud Firebase (Jika dijalankan di platform/online)
+                if (currUser && db) {
+                    try {
+                        const resultsRef = collection(db, 'artifacts', appId, 'public', 'data', 'exam_results');
+                        addDoc(resultsRef, resultData);
+                    } catch (e) {
+                        console.error("Error saving result to cloud:", e);
+                    }
+                }
+
+                // Exit fullscreen gracefully
+                try {
+                    if (document.fullscreenElement && document.exitFullscreen) {
+                        document.exitFullscreen().catch(err => console.warn(`Exit fullscreen error: ${err.message}`));
+                    }
+                } catch (err) {
+                    console.warn(`Fullscreen exit error: ${err.message}`);
+                }
+            };
+
+            const submitExam = () => executeSubmit();
+
+            useEffect(() => {
+                if (step === 1) {
+                    const timer = setInterval(() => {
+                        setTimeLeft((prevTime) => {
+                            if (prevTime <= 1) {
+                                clearInterval(timer);
+                                setExamCompleteReason("Waktu ujian telah habis (65 Menit). Ujian dikumpulkan secara otomatis.");
+                                executeSubmit();
+                                return 0;
+                            }
+                            return prevTime - 1;
+                        });
+                    }, 1000);
+                    return () => clearInterval(timer);
+                }
+            }, [step]);
+            
+            const formatTime = (seconds) => {
+                const m = Math.floor(seconds / 60).toString().padStart(2, '0');
+                const s = (seconds % 60).toString().padStart(2, '0');
+                return `${m}:${s}`;
+            };
+
+            // --- FIREBASE AUTH & DATA FETCHING ---
+            useEffect(() => {
+                if (!auth) return;
+                const initAuth = async () => {
+                    try {
+                        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                            await signInWithCustomToken(auth, __initial_auth_token);
+                        } else {
+                            await signInAnonymously(auth);
+                        }
+                    } catch (e) {
+                        console.error("Auth error:", e);
+                    }
+                };
+                initAuth();
+                const unsubscribe = onAuthStateChanged(auth, setUser);
+                return () => unsubscribe();
+            }, []);
+
+            useEffect(() => {
+                if (viewMode !== 'teacher') return;
+                
+                if (user && db) {
+                    const resultsRef = collection(db, 'artifacts', appId, 'public', 'data', 'exam_results');
+                    const unsubscribe = onSnapshot(resultsRef, (snapshot) => {
+                        const results = [];
+                        snapshot.forEach(doc => {
+                            results.push({ id: doc.id, ...doc.data() });
+                        });
+                        results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        setAllResults(results);
+                    }, (error) => {
+                        console.error("Error fetching results:", error);
+                    });
+
+                    return () => unsubscribe();
+                } else {
+                    // Gunakan Database Offline jika dijalankan secara lokal/tanpa internet
+                    loadOfflineResults().then(results => {
+                        results.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+                        setAllResults(results);
+                    });
+                }
+            }, [user, viewMode]);
+
+            // Anti-Cheat: Disable Right Click & Selection
+            useEffect(() => {
+                const disableContext = (e) => e.preventDefault();
+                document.addEventListener('contextmenu', disableContext);
+                return () => document.removeEventListener('contextmenu', disableContext);
+            }, []);
+
+            // Anti-Cheat: Tab Switch Detection
+            useEffect(() => {
+                const handleVisibilityChange = () => {
+                    if (document.hidden && step === 1) {
+                        handleCheatAttempt();
+                    }
+                };
+                document.addEventListener('visibilitychange', handleVisibilityChange);
+                return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+            }, [step, warnings]);
+
+            const handleCheatAttempt = () => {
+                const newWarnings = warnings + 1;
+                setWarnings(newWarnings);
+                if (newWarnings >= 3) {
+                    setExamCompleteReason("Ujian dihentikan paksa karena sistem mendeteksi Anda keluar dari halaman lebih dari batas maksimal (3 kali).");
+                    executeSubmit(newWarnings);
+                } else {
+                    setShowWarningModal(true);
+                }
+            };
+
+            const enterFullscreen = () => {
+                try {
+                    const el = document.documentElement;
+                    let promise;
+                    if (el.requestFullscreen) promise = el.requestFullscreen();
+                    else if (el.mozRequestFullScreen) promise = el.mozRequestFullScreen();
+                    else if (el.webkitRequestFullscreen) promise = el.webkitRequestFullscreen();
+                    else if (el.msRequestFullscreen) promise = el.msRequestFullscreen();
+                    
+                    if (promise !== undefined) {
+                        promise.catch(err => console.warn(`Fullscreen API is disallowed by permissions policy: ${err.message}`));
+                    }
+                } catch (err) {
+                    console.warn(`Fullscreen API error: ${err.message}`);
+                }
+            };
+
+            const startExam = (e) => {
+                e.preventDefault();
+                if (!student.name.trim()) return;
+                
+                enterFullscreen();
+                const randomPkgIndex = Math.floor(Math.random() * MULTIPLIERS.length);
+                setPackageData(generatePackage(randomPkgIndex));
+                setTimeLeft(EXAM_DURATION);
+                setStep(1);
+            };
+
+            const handleAnswerChange = (qId, val) => {
+                setAnswers(prev => ({ ...prev, [qId]: val }));
+            };
+            
+            if (step === 0) {
+                if (viewMode === 'teacher') {
+                    return (
+                        <div className="min-h-screen bg-gray-100 p-6 pb-16">
+                            <div className="max-w-6xl mx-auto bg-white p-8 rounded-2xl shadow-xl">
+                                <div className="flex justify-between items-center mb-6 border-b pb-4">
+                                    <h1 className="text-2xl font-bold text-gray-800">Dashboard Hasil Ujian (Guru)</h1>
+                                    <button onClick={() => setViewMode('student')} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-semibold transition-colors">
+                                        Kembali ke Beranda
+                                    </button>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-collapse">
+                                        <thead>
+                                            <tr className="bg-gray-50 border-b-2 border-gray-200">
+                                                <th className="p-3 text-gray-600 font-semibold">Waktu Selesai</th>
+                                                <th className="p-3 text-gray-600 font-semibold">Nama Murid</th>
+                                                <th className="p-3 text-gray-600 font-semibold">Kelas</th>
+                                                <th className="p-3 text-gray-600 font-semibold">Paket Ujian</th>
+                                                <th className="p-3 text-gray-600 font-semibold text-center">Pelanggaran</th>
+                                                <th className="p-3 text-gray-600 font-semibold text-right">Skor Akhir</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {allResults.map(res => (
+                                                <tr key={res.id} className="border-b border-gray-100 hover:bg-gray-50">
+                                                    <td className="p-3 text-sm text-gray-500">{new Date(res.timestamp).toLocaleString('id-ID')}</td>
+                                                    <td className="p-3 font-medium text-gray-800">{res.name}</td>
+                                                    <td className="p-3 text-gray-600">{res.cls}</td>
+                                                    <td className="p-3 text-gray-600 text-sm">{res.package}</td>
+                                                    <td className="p-3 text-center">
+                                                        {res.warnings > 0 ? (
+                                                            <span className="bg-red-100 text-red-700 px-2 py-1 rounded text-xs font-bold">{res.warnings}x</span>
+                                                        ) : (
+                                                            <span className="text-green-500" title="Aman"><i className="fas fa-check-circle"></i></span>
+                                                        )}
+                                                    </td>
+                                                    <td className="p-3 font-bold text-blue-600 text-right text-lg">{res.score}</td>
+                                                </tr>
+                                            ))}
+                                            {allResults.length === 0 && (
+                                                <tr>
+                                                    <td colSpan="6" className="p-8 text-center text-gray-500">
+                                                        <i className="fas fa-inbox text-3xl mb-3 text-gray-300"></i>
+                                                        <p>Belum ada data hasil ujian yang masuk.</p>
+                                                    </td>
+                                                </tr>
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                            <FooterMarquee />
+                        </div>
+                    );
+                }
+
+                return (
+                    <div className="min-h-screen flex flex-col items-center justify-center p-4 pb-16">
+                        <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full relative">
+                            <div className="absolute top-4 right-4">
+                                <button onClick={() => setViewMode('teacher')} className="text-gray-400 hover:text-blue-600 transition-colors" title="Akses Guru">
+                                    <i className="fas fa-user-shield"></i>
+                                </button>
+                            </div>
+                            <div className="text-center mb-8">
+                                <h1 className="text-2xl font-bold text-blue-700">Sumatif Matematika</h1>
+                                <p className="text-gray-600">Kesebangunan & Kekongruenan</p>
+                                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700 text-left">
+                                    <strong><i className="fas fa-shield-alt mr-2"></i>Sistem Anti-Curang Aktif:</strong>
+                                    <ul className="list-disc ml-5 mt-1">
+                                        <li>Layar penuh otomatis.</li>
+                                        <li>Dilarang berpindah tab/aplikasi.</li>
+                                        <li>Batas pelanggaran 3 kali.</li>
+                                    </ul>
+                                </div>
+                            </div>
+                            <form onSubmit={startExam} className="space-y-4">
+                                <div>
+                                    <label className="block text-gray-700 font-medium mb-1">Nama Lengkap</label>
+                                    <input type="text" required value={student.name} onChange={e => setStudent({...student, name: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none" placeholder="Masukkan nama Anda" />
+                                </div>
+                                <div>
+                                    <label className="block text-gray-700 font-medium mb-1">Kelas</label>
+                                    <select value={student.cls} onChange={e => setStudent({...student, cls: e.target.value})} className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+                                        {['IXA', 'IXB', 'IXC', 'IXD', 'IXE', 'IXF'].map(c => <option key={c} value={c}>{c}</option>)}
+                                    </select>
+                                </div>
+                                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 rounded-lg mt-4 transition-colors">
+                                    Mulai Ujian
+                                </button>
+                            </form>
+                        </div>
+                        <FooterMarquee />
+                    </div>
+                );
+            }
+
+            if (step === 1) {
+                return (
+                    <div className="min-h-screen flex flex-col no-select pb-12">
+                        <Modal 
+                            isOpen={showWarningModal} 
+                            title="Peringatan Pelanggaran!" 
+                            message={`Sistem mendeteksi Anda meninggalkan halaman ujian. Ini adalah peringatan ke-${warnings} dari maksimal 3. Jika mencapai 3, ujian akan otomatis disubmit.`}
+                            btnText="Saya Mengerti"
+                            onAction={() => setShowWarningModal(false)}
+                        />
+                        <Modal 
+                            isOpen={showConfirmSubmit} 
+                            title="Konfirmasi" 
+                            message="Apakah Anda yakin ingin menyelesaikan ujian dan mengumpulkan jawaban? Aksi ini tidak dapat dibatalkan."
+                            btnText="Ya, Selesai"
+                            onAction={() => { setShowConfirmSubmit(false); submitExam(); }}
+                            secondaryBtnText="Batal"
+                            onSecondaryAction={() => setShowConfirmSubmit(false)}
+                        />
+                        
+                        {/* Header */}
+                        <header className="bg-white shadow-md py-4 px-6 flex justify-between items-center sticky top-0 z-40 gap-4 flex-wrap">
+                            <div>
+                                <h1 className="text-xl font-bold text-gray-800">{student.name} - {student.cls}</h1>
+                                <p className="text-sm text-gray-500">Mengerjakan {packageData.pkgName}</p>
+                            </div>
+                            
+                            {/* TIMER DISPLAY */}
+                            <div className={`flex items-center gap-2 px-5 py-2 rounded-lg font-mono text-2xl font-bold border-2 shadow-sm transition-colors ${timeLeft < 300 ? 'bg-red-100 text-red-700 border-red-500 animate-pulse' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                                <i className="fas fa-clock"></i> {formatTime(timeLeft)}
+                            </div>
+
+                            <div className="flex items-center gap-4">
+                                <div className="text-red-500 font-bold bg-red-100 px-3 py-1 rounded-full text-sm">
+                                    <i className="fas fa-exclamation-circle mr-1"></i> Pelanggaran: {warnings}/3
+                                </div>
+                                <button onClick={() => setShowConfirmSubmit(true)} className="bg-green-600 hover:bg-green-700 text-white px-5 py-2 rounded-lg font-semibold transition-colors shadow-sm">
+                                    Selesai & Kumpulkan
+                                </button>
+                            </div>
+                        </header>
+
+                        {/* Questions */}
+                        <main className="flex-grow p-6 max-w-4xl mx-auto w-full space-y-8 pb-20">
+                            {packageData.questions.map((q, index) => (
+                                <div key={q.id} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                                    <div className="flex gap-4">
+                                        <div className="font-bold text-lg">{index + 1}.</div>
+                                        <div className="flex-grow">
+                                            <p className="text-gray-800 text-lg mb-4">{q.text}</p>
+                                            {q.img && <div className="mb-4">{q.img}</div>}
+                                            
+                                            {q.type === 'pg' ? (
+                                                <div className="space-y-2">
+                                                    {q.options.map((opt, oIdx) => (
+                                                        <label key={oIdx} className="flex items-center p-3 rounded-lg border border-gray-200 cursor-pointer hover:bg-blue-50 transition-colors">
+                                                            <input type="radio" name={`q_${q.id}`} className="w-5 h-5 text-blue-600" checked={answers[q.id] === oIdx} onChange={() => handleAnswerChange(q.id, oIdx)} />
+                                                            <span className="ml-3 text-gray-700">{['A', 'B', 'C', 'D'][oIdx]}. {opt}</span>
+                                                        </label>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <div>
+                                                    <input type="number" step="any" className="w-full max-w-xs border-2 border-gray-300 rounded-lg px-4 py-2 focus:border-blue-500 focus:outline-none text-lg" placeholder="Ketik jawaban..." value={answers[q.id] || ''} onChange={(e) => handleAnswerChange(q.id, e.target.value)} />
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </main>
+                        <FooterMarquee />
+                    </div>
+                );
+            }
+
+            if (step === 2) {
+                return (
+                    <div className="min-h-screen bg-gray-100 p-6 pb-16">
+                        <div className="max-w-4xl mx-auto bg-white p-8 rounded-2xl shadow-xl">
+                            {/* Non-Print Header Actions */}
+                            <div className="no-print flex justify-end mb-6 space-x-4">
+                                <button onClick={() => window.location.reload()} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg font-semibold transition-colors">
+                                    <i className="fas fa-home mr-2"></i>Kembali
+                                </button>
+                                <button onClick={() => window.print()} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-semibold transition-colors">
+                                    <i className="fas fa-file-pdf mr-2"></i>Unduh PDF Hasil
+                                </button>
+                            </div>
+
+                            {/* Print Header */}
+                            <div className="border-b-2 border-gray-800 pb-4 mb-6">
+                                <div className="flex justify-between items-end">
+                                    <div>
+                                        <h1 className="text-3xl font-bold text-gray-900 mb-1">Laporan Hasil Sumatif</h1>
+                                        <h2 className="text-xl text-gray-700">Materi: Kesebangunan & Kekongruenan</h2>
+                                    </div>
+                                    <div className="text-right">
+                                        <p className="text-gray-600">Tanggal: {new Date().toLocaleDateString('id-ID')}</p>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Student Info & Score */}
+                            <div className="flex flex-col md:flex-row justify-between mb-8 gap-6">
+                                <div className="bg-gray-50 p-6 rounded-xl border border-gray-200 flex-grow">
+                                    <h3 className="font-bold text-lg text-gray-800 mb-4 border-b pb-2">Identitas Siswa</h3>
+                                    <table className="w-full">
+                                        <tbody>
+                                            <tr><td className="py-1 text-gray-600 w-1/3">Nama</td><td className="font-semibold">: {student.name}</td></tr>
+                                            <tr><td className="py-1 text-gray-600">Kelas</td><td className="font-semibold">: {student.cls}</td></tr>
+                                            <tr><td className="py-1 text-gray-600">Varian Soal</td><td className="font-semibold">: {packageData.pkgName}</td></tr>
+                                            <tr><td className="py-1 text-gray-600">Pelanggaran</td><td className="font-semibold">: {warnings}x (Anti-Cheat)</td></tr>
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="bg-blue-50 p-6 rounded-xl border border-blue-100 flex flex-col items-center justify-center min-w-[200px]">
+                                    <h3 className="font-bold text-gray-700 mb-2">Skor Akhir</h3>
+                                    <div className="text-6xl font-black text-blue-600">{score}</div>
+                                    <div className="mt-2 text-sm text-gray-500">Skala 100</div>
+                                </div>
+                            </div>
+
+                            {examCompleteReason && (
+                                <div className="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-8" role="alert">
+                                    <p className="font-bold">Catatan Sistem:</p>
+                                    <p>{examCompleteReason}</p>
+                                </div>
+                            )}
+
+                            {/* Detailed Analysis */}
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-800 mb-4 border-b-2 border-gray-200 pb-2">Analisis Jawaban</h3>
+                                <div className="space-y-6">
+                                    {packageData.questions.map((q, idx) => {
+                                        const userAns = answers[q.id];
+                                        let isCorrect = false;
+                                        let userAnsText = "- Kosong -";
+                                        let correctAnsText = "";
+
+                                        if (q.type === 'pg') {
+                                            isCorrect = userAns === q.answer;
+                                            userAnsText = userAns !== undefined ? ['A', 'B', 'C', 'D'][userAns] + ". " + q.options[userAns] : "- Kosong -";
+                                            correctAnsText = ['A', 'B', 'C', 'D'][q.answer] + ". " + q.options[q.answer];
+                                        } else {
+                                            isCorrect = userAns && userAns.toString().trim() === q.answer;
+                                            userAnsText = userAns ? userAns.toString() : "- Kosong -";
+                                            correctAnsText = q.answer;
+                                        }
+
+                                        return (
+                                            <div key={q.id} className="print-break-inside-avoid bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                                <div className="flex justify-between items-start gap-4">
+                                                    <div className="font-bold w-6">{idx + 1}.</div>
+                                                    <div className="flex-grow">
+                                                        <p className="text-gray-800 mb-2">{q.text}</p>
+                                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+                                                            <div className="p-2 bg-white rounded border">
+                                                                <span className="font-semibold text-gray-600">Jawaban Siswa:</span>
+                                                                <p className={`mt-1 font-medium ${isCorrect ? 'text-green-600' : 'text-red-600'}`}>
+                                                                    {isCorrect ? <i className="fas fa-check mr-2"></i> : <i className="fas fa-times mr-2"></i>}
+                                                                    {userAnsText}
+                                                                </p>
+                                                            </div>
+                                                            {!isCorrect && (
+                                                                <div className="p-2 bg-green-50 rounded border border-green-100">
+                                                                    <span className="font-semibold text-green-800">Kunci Jawaban:</span>
+                                                                    <p className="mt-1 font-medium text-green-700">{correctAnsText}</p>
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                            
+                            {/* Print Footer */}
+                            <div className="print-only mt-12 pt-8 border-t border-gray-300 text-center text-sm text-gray-500">
+                                <p>Dokumen ini dihasilkan secara otomatis oleh Sistem Ujian Sumatif Anti-Curang.</p>
+                            </div>
+                        </div>
+                        <FooterMarquee />
+                    </div>
+                );
+            }
+
+            return null;
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
